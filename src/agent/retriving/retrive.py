@@ -26,6 +26,8 @@ def search_rulebook(query: str, top_k: int = 1):
     # 1. Validate the user query
     if not query or not query.strip():
         raise ValueError("Query cannot be empty")
+    if top_k <= 0:
+        raise ValueError("top_k must be a positive integer")
 
     # 2. Convert the user's question into an embedding
     query_embedding = list(
