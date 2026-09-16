@@ -60,6 +60,7 @@ def search_rulebook(query: str, top_k: int = 1):
     for rule, distance_value in results:
         retrieved_rules.append(
             {
+                "rule_id": rule.section,
                 "section": rule.section,
                 "content": rule.content,
                 "source": rule.source,
