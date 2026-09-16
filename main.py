@@ -12,7 +12,7 @@ from agent.services.contract_review import review_contract_with_search
 def main():
     pdf_path = os.getenv(
         "CONTRACT_PDF_PATH",
-        r"C:\Users\User\Downloads\construction_agreement_meridian.pdf"
+        r"C:\Users\User\Downloads\construction_agreement_skyline.pdf"
     )
 
     if len(sys.argv) > 1:

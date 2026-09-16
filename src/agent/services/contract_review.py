@@ -82,62 +82,112 @@ Rules:
     return ReviewResponse.model_validate(data)
 
 
-def review_contract_with_search(
+def review_contract_with_agentic_tools(
     contract: ContractDetails,
-    contract_text: str = "",
-    top_k: int = 3,
+    max_steps: int = 5,
 ) -> ReviewResponse:
     """
-    Retrieve relevant rulebook chunks using targeted queries based on contract details,
-    then review the contract against retrieved rules.
+    Autonomous LLM Agentic Review:
+    The LLM receives contract details and decides dynamically when to call search_rulebook_tool.
+    Python executes tool calls against pgvector and feeds results back to the LLM.
     """
-    # Create targeted query strings for vector retrieval instead of embedding raw full text
-    queries = [
-        "contract amount tax rate payment terms milestone",
-        "warranty period defect liability duration",
-        "liquidated damages delay penalty completion date",
-        "termination notice period governing law jurisdiction",
+    system_prompt = f"""
+You are a construction contract review assistant.
+
+Your task is to review the provided contract details against company policy rules stored in our pgvector database.
+
+You have access to `search_rulebook_tool`.
+
+Instructions:
+1. Look at the contract details provided.
+2. If you need policy rules to evaluate compliance (e.g., warranty limits, payment terms, delay penalties, tax rules, liability caps), call `search_rulebook_tool` with a targeted query.
+3. You may call `search_rulebook_tool` multiple times with different search queries if needed.
+4. Once you have retrieved all necessary rules and evaluated compliance, output your final answer as a JSON object matching this schema:
+{json.dumps(ReviewResponse.model_json_schema())}
+
+Rules for final output:
+- Identify only issues where the contract differs from or violates a retrieved rule.
+- Do not invent rules or contract values.
+- Output valid JSON matching the schema with status, summary, and flags.
+"""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": f"Please review this contract:\n{json.dumps(contract.model_dump(mode='json'))}",
+        },
     ]
 
-    seen_ids = set()
-    aggregated_rules = []
+    tools = [SEARCH_TOOL_SPEC]
 
-    for q in queries:
-        fetched = search_rulebook_tool(q, top_k=top_k)
-        for rule in fetched:
-            rule_key = (rule.get("rule_id"), rule.get("content")[:50])
-            if rule_key not in seen_ids:
-                seen_ids.add(rule_key)
-                aggregated_rules.append(rule)
+    for step in range(max_steps):
+        response = client.chat.completions.create(
+            model=MODEL,
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+        )
 
-    if not aggregated_rules:
-        # Fallback to general search if no targeted rules matched
-        aggregated_rules = search_rulebook_tool("contract terms rules", top_k=5)
+        response_message = response.choices[0].message
+        messages.append(response_message)
 
-    return review_contract(contract, aggregated_rules)
+        if response_message.tool_calls:
+            print(f"\n[LLM Agent] Step {step + 1}: LLM decided to call {len(response_message.tool_calls)} tool(s)...")
+            for tool_call in response_message.tool_calls:
+                func_name = tool_call.function.name
+                func_args = json.loads(tool_call.function.arguments)
+
+                print(f"   -> LLM calling '{func_name}' with query: '{func_args.get('query')}'")
+
+                if func_name == "search_rulebook_tool":
+                    tool_output = search_rulebook_tool(
+                        query=func_args.get("query"),
+                        top_k=func_args.get("top_k", 3),
+                    )
+                else:
+                    tool_output = {"error": f"Unknown tool {func_name}"}
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": func_name,
+                    "content": json.dumps(tool_output),
+                })
+        else:
+            content = response_message.content
+            if not content:
+                raise ValueError("LLM returned empty final content")
+
+            first_brace = content.find("{")
+            last_brace = content.rfind("}")
+            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                json_str = content[first_brace : last_brace + 1]
+            else:
+                json_str = content
+
+            data = json.loads(json_str)
+            return ReviewResponse.model_validate(data)
+
+    raise TimeoutError("LLM exceeded max agentic tool loop steps")
+
+
+def review_contract_with_search(
+    contract: ContractDetails,
+) -> ReviewResponse:
+    """Retrieve relevant rulebook chunks using dynamic LLM tool calling."""
+    return review_contract_with_agentic_tools(contract)
 
 
 if __name__ == "__main__":
-    contract = ContractDetails(
-        contract_name="Construction Services Agreement",
-        contract_amount=8500000,
-        tax_rate=18,
-        effective_date="2026-03-01",
-        completion_date="2026-12-15",
-        file_url=None,
-    )
+    from agent.services.contract_extract import extract_contract_details_from_pdf
 
-    rules = [
-        {
-            "rule_id": "R1",
-            "section": "Warranty",
-            "content": "Warranty period must be 12 months.",
-            "source": "rulebook.pdf",
-            "page": 5,
-            "distance": 0.12,
-        }
-    ]
-
-    result = review_contract(contract, rules)
-
-    print(result.model_dump_json(indent=2))
+    pdf_path = r"C:\Users\User\Downloads\construction_agreement_skyline.pdf"
+    if Path(pdf_path).is_file():
+        print(f"Extracting details from {pdf_path}...")
+        contract = extract_contract_details_from_pdf(pdf_path)
+        print("\nReviewing contract using autonomous LLM search tool...")
+        result = review_contract_with_search(contract)
+        print("\nReview Result:\n", result.model_dump_json(indent=2))

@@ -33,7 +33,7 @@ def extract_contract_text(pdf_path: str) -> str:
     return "\n".join(all_text)
 
 if __name__ == "__main__":
-    pdf_path = r"C:\Users\User\Downloads\construction_agreement_meridian.pdf"
+    pdf_path = r"C:\Users\User\Downloads\construction_agreement_skyline.pdf"
 
     if not Path(pdf_path).is_file():
         raise FileNotFoundError(
