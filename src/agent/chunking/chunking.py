@@ -39,7 +39,7 @@ text = "\n".join(all_text)
 
 print("OCR text extracted")
 print("=" * 80)
-print(text)
+print(f"Extracted text length: {len(text)} characters")
 
 
 # -----------------------------
