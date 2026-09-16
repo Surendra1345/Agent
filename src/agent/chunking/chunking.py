@@ -3,80 +3,77 @@ import re
 import pymupdf
 from rapidocr import RapidOCR
 
-pdf_path = r"C:\Users\User\Downloads\construction_rulebook.pdf"
+def extract_chunks(pdf_path: str) -> list[str]:
+    if not os.path.exists(pdf_path):
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-if not os.path.exists(pdf_path):
-    raise FileNotFoundError(f"PDF not found: {pdf_path}")
+    # -----------------------------
+    # 1. Extract text using OCR
+    # -----------------------------
+    ocr = RapidOCR()
+    pdf = pymupdf.open(pdf_path)
 
-# -----------------------------
-# 1. Extract text using OCR
-# -----------------------------
-ocr = RapidOCR()
-pdf = pymupdf.open(pdf_path)
+    all_text = []
 
-all_text = []
+    for page_number, page in enumerate(pdf, start=1):
+        page_text = page.get_text().strip()
 
-for page_number, page in enumerate(pdf, start=1):
+        # If page has no selectable text, use OCR
+        if not page_text:
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))
+            image_bytes = pix.tobytes("png")
 
-    page_text = page.get_text().strip()
+            result = ocr(image_bytes)
 
-    # If page has no selectable text, use OCR
-    if not page_text:
-        pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))
-        image_bytes = pix.tobytes("png")
+            if hasattr(result, "txts"):
+                page_text = "\n".join(result.txts or [])
 
-        result = ocr(image_bytes)
+        if page_text:
+            all_text.append(page_text)
 
-        if hasattr(result, "txts"):
-            page_text = "\n".join(result.txts or [])
+    pdf.close()
 
-    if page_text:
-        all_text.append(page_text)
+    text = "\n".join(all_text)
 
-pdf.close()
+    print("OCR text extracted")
+    print("=" * 80)
+    print(f"Extracted text length: {len(text)} characters")
 
-text = "\n".join(all_text)
+    # -----------------------------
+    # 2. Structure-aware chunking
+    # -----------------------------
+    # Matches R1, R2, ... R12
+    rule_pattern = re.compile(
+        r"(?<![A-Za-z0-9])R(1[0-2]|[1-9])(?![A-Za-z0-9])",
+        re.IGNORECASE
+    )
 
-print("OCR text extracted")
-print("=" * 80)
-print(f"Extracted text length: {len(text)} characters")
+    matches = list(rule_pattern.finditer(text))
 
+    chunks = []
 
-# -----------------------------
-# 2. Structure-aware chunking
-# -----------------------------
-# Matches R1, R2, ... R12
-rule_pattern = re.compile(
-    r"(?<![A-Za-z0-9])R(1[0-2]|[1-9])(?![A-Za-z0-9])",
-    re.IGNORECASE
-)
+    for i, match in enumerate(matches):
+        start = match.start()
 
-matches = list(rule_pattern.finditer(text))
+        if i + 1 < len(matches):
+            end = matches[i + 1].start()
+        else:
+            end = len(text)
 
-chunks = []
+        chunk = text[start:end].strip()
 
-for i, match in enumerate(matches):
+        if chunk:
+            chunks.append(chunk)
 
-    start = match.start()
+    # -----------------------------
+    # 3. Display chunks
+    # -----------------------------
+    print("\n" + "=" * 80)
+    print(f"TOTAL RULE CHUNKS: {len(chunks)}")
+    print("=" * 80)
 
-    if i + 1 < len(matches):
-        end = matches[i + 1].start()
-    else:
-        end = len(text)
+    for i, chunk in enumerate(chunks, start=1):
+        print(f"\n--- CHUNK {i} ---")
+        print(chunk)
 
-    chunk = text[start:end].strip()
-
-    if chunk:
-        chunks.append(chunk)
-
-
-# -----------------------------
-# 3. Display chunks
-# -----------------------------
-print("\n" + "=" * 80)
-print(f"TOTAL RULE CHUNKS: {len(chunks)}")
-print("=" * 80)
-
-for i, chunk in enumerate(chunks, start=1):
-    print(f"\n--- CHUNK {i} ---")
-    print(chunk)
+    return chunks

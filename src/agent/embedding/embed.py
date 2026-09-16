@@ -1,3 +1,4 @@
+import os
 import re
 import sys
 from pathlib import Path
@@ -7,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from fastembed import TextEmbedding
 from sqlalchemy.orm import Session
 
-from agent.chunking.chunking import chunks
+from agent.chunking.chunking import extract_chunks
 from agent.config.database import engine
 from agent.model.model import ContractRule
 
@@ -25,6 +26,8 @@ embedding_model = TextEmbedding(
 # 2. Generate embeddings
 # --------------------------------
 
+pdf_path = os.environ["CONTRACT_RULEBOOK_PATH"]
+chunks = extract_chunks(pdf_path)
 texts = chunks
 print("\n========== CHUNKS ==========")
 
@@ -54,7 +57,7 @@ with Session(engine) as session:
             contract_rules=section_name,
             content=chunk,
             embedding=embedding.tolist(),
-            source=r"C:\Users\User\Downloads\construction_rulebook.pdf",
+            source=pdf_path,
             page=1,
             section=section_name,
         )
