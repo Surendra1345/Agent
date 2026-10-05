@@ -1,0 +1,26 @@
+[project]
+name = "agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.141.1",
+    "fastembed>=0.8.0",
+    "langchain-community>=0.4.2",
+    "langchain-core>=1.6.3",
+    "langchain-google-genai>=4.4.0",
+    "langchain-openai>=1.6.2",
+    "langgraph>=1.2.11",
+    "logging>=0.4.9.6",
+    "onnxruntime>=1.20.0",
+    "openai>=3.14.1",
+    "pgvector>=0.5.0",
+    "psycopg2-binary>=2.9.9",
+    "pymupdf>=1.28.2",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.32",
+    "rapidocr>=3.9.2",
+    "sqlalchemy>=2.0.53",
+    "uvicorn>=0.53.0",
+]
