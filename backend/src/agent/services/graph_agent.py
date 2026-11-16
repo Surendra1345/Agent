@@ -552,13 +552,18 @@ def build_contract_graph():
     for node in ["contract_auditor_node", "invoice_validator_node", "sql_agent_node", "save_node", "cancel_node", "general_agent_node"]:
         wf.add_edge(node, END)
 
-    graph = wf.compile()
-    image = graph.get_graph().draw_mermaid_png()
-    with open("langgraph_workflow.png","wb") as f:
-        f.write(image)
-
     return wf.compile(checkpointer=MemorySaver())
 
 
 contract_graph = build_contract_graph()
+
+
+def export_graph_diagram(path: str = "langgraph_workflow.png") -> None:
+    """Render the workflow diagram on demand (needs internet; uses mermaid.ink).
+
+    Run with: python -c "from agent.services.graph_agent import export_graph_diagram as e; e()"
+    """
+    image = contract_graph.get_graph().draw_mermaid_png()
+    with open(path, "wb") as f:
+        f.write(image)
 

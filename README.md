@@ -1,4 +1,50 @@
-# Agent
+# Agent — Construction Contract & Invoice Review
+
+An AI agent that reviews construction contracts against a company rulebook, validates invoices against their
+contracts, answers questions about stored documents, and turns plain-English questions into safe SQL.
+
+- **Backend:** FastAPI + LangGraph, PostgreSQL with pgvector, OpenRouter LLM (default `openai/gpt-4o-mini`)
+- **Frontend:** React + Vite + TypeScript
+- **Single endpoint:** `POST /api/chat` handles chat, PDF upload, review, save confirmation and queries
+
+## Getting Started
+
+### Prerequisites
+Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), Node 20+, PostgreSQL with the `pgvector` extension.
+
+### Backend
+```bash
+cd backend
+cp .env.example .env        # then fill in the values below
+uv sync
+uv run alembic upgrade head
+uv run uvicorn agent.api:app --reload --app-dir src
+```
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | yes | e.g. `postgresql+psycopg2://user:pass@localhost:5432/Agent` (use the `+psycopg2` driver) |
+| `OPENROUTER_API_KEY` | yes | OpenRouter key (`Api-Key` still works as a fallback) |
+| `CONTRACT_RULEBOOK_PATH` | for ingestion | Path to the rulebook PDF used by `embedding/embed.py` |
+| `LLM_MODEL` | no | Defaults to `openai/gpt-4o-mini` |
+| `CORS_ORIGINS` | no | Comma-separated allowed origins. Defaults to `http://localhost:5173` |
+
+Never commit `.env`. Database credentials live only in `DATABASE_URL`; `alembic.ini` holds a placeholder.
+
+### Frontend
+```bash
+cd frontend
+npm ci
+npm run dev        # http://localhost:5173
+```
+
+### Tests
+```bash
+cd backend
+uv run pytest
+```
+
+To regenerate the workflow diagram (needs internet): `uv run python -c "from agent.services.graph_agent import export_graph_diagram as e; e()"`
 
 ---
 
@@ -149,17 +195,38 @@ sequenceDiagram
 
 ## Safety Layer (SQL Injection Protection)
 
-```
-User Input          LLM Output                  PostgreSQL Execution
-─────────           ──────────                  ────────────────────
-"15%"     ──────►  sql    = "WHERE tax_rate > :tax"   ◄─── Value bound
-                   params = {"tax": 15}          ──────────────────
-                                                 Treats 15 as DATA,
-                                                 not as SQL command ✅
+Generated SQL is never trusted. `validate_select_sql()` in `text_to_sql.py` parses it with `sqlglot` and enforces:
 
-                   ❌ NEVER:
-                   "WHERE tax_rate > 15"  (inline string = SQL injection risk)
+| Rule | Example blocked |
+|---|---|
+| Exactly one statement | `SELECT 1; DROP TABLE contracts` |
+| Top level must be a `SELECT` | `DROP`, `UPDATE`, `INSERT`, `DELETE`, `CREATE` |
+| No data-modifying CTEs | `WITH x AS (DELETE ... RETURNING *) SELECT ...` |
+| Only `contracts` and `invoices` tables | `SELECT * FROM pg_user` |
+| No server/file/sleep functions | `pg_sleep`, `lo_import`, `pg_read_file`, `dblink` |
+| `LIMIT 50` added if missing | unbounded result sets |
+
+The original SQL text is kept as-is (case and `:name` placeholders untouched). Execution also runs in a
+`READ ONLY` transaction with a 10 s `statement_timeout`, so a validation miss still cannot write data.
+
 ```
+User Input          LLM Output                          PostgreSQL Execution
+─────────           ──────────                          ────────────────────
+"15%"     ──────►  sql    = "WHERE tax_rate > :tax"     ◄─── Value bound
+                   params = {"tax": 15}                 Treats 15 as DATA, not as SQL ✅
+```
+
+## Uploads
+
+PDF only (checked by extension and `%PDF-` signature), max 25 MB. Files are stored with a unique prefix so uploads
+never overwrite each other. A PDF that cannot be parsed returns `422` and is deleted.
+
+## Known limitations
+
+- Conversation memory is in-process (`MemorySaver`); it resets on restart. Send a `session_id` per user, otherwise all
+  requests share one session.
+- `invoices.contract_id` is unique, so a contract can hold only one invoice.
+- No authentication or rate limiting on `/api/chat`; `/uploads` is served publicly.
 
 ---
 

@@ -6,10 +6,16 @@ from agent.config.database import engine
 from agent.model.model import ContractRule
 
 
-# Use the SAME embedding model used during rulebook ingestion
-embedding_model = TextEmbedding(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
+# Use the SAME embedding model used during rulebook ingestion.
+# Loaded lazily so importing the app does not download the model.
+_embedding_model: TextEmbedding | None = None
+
+
+def get_embedding_model() -> TextEmbedding:
+    global _embedding_model
+    if _embedding_model is None:
+        _embedding_model = TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    return _embedding_model
 
 
 def search_rulebook(query: str, top_k: int = 3):
@@ -26,7 +32,7 @@ def search_rulebook(query: str, top_k: int = 3):
 
     # 2. Convert the user's question into an embedding
     query_embedding = list(
-        embedding_model.embed([query])
+        get_embedding_model().embed([query])
     )[0].tolist()
 
     # 3. Calculate cosine distance

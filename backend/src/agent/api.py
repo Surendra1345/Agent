@@ -1,5 +1,7 @@
+import os
 from pathlib import Path
 import shutil
+import uuid
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -20,7 +22,7 @@ app = FastAPI(title="Construction Contract Review & AI Agent API")
 # Enable CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,7 +81,8 @@ def chat(
                 logger.warning(f"File {file.filename} exceeds 25MB limit: {file_size_bytes} bytes")
                 raise HTTPException(status_code=413, detail="File too large. Maximum supported size is 25 MB.")
 
-            filename = Path(file.filename).name
+            # Unique name so uploads never overwrite each other.
+            filename = f"{uuid.uuid4().hex[:8]}_{Path(file.filename).name}"
             saved_file_path = UPLOAD_DIR / filename
 
             with saved_file_path.open("wb") as output_file:
@@ -103,4 +106,8 @@ def chat(
         raise
     except Exception as exc:
         logger.error(f"Error in /api/chat for session '{session_id}': {exc}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # A file that crashed processing (e.g. corrupt PDF) should not stay on disk.
+        if file_path:
+            Path(file_path).unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail="Could not process the uploaded PDF. It may be corrupt or unreadable.") from exc
+        raise HTTPException(status_code=500, detail="Internal server error.") from exc
