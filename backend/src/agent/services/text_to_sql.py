@@ -3,7 +3,9 @@ Text-to-SQL service using LLM.
 Converts any natural language prompt about contracts or invoices into a safe PostgreSQL SELECT query.
 """
 import json
-import re
+
+import sqlglot
+from sqlglot import exp
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -88,29 +90,61 @@ Output format (JSON only, no markdown):
     sql = data.get("sql", "SELECT * FROM contracts")
     params = data.get("params", {})
 
-    #--Safety Guardrail--
-    clean_sql=sql.strip()
-    clean_sql=clean_sql.upper()
-    #1.must be select query 
-    if not clean_sql.startswith("SELECT"):
-        raise ValueError("only select queries allowed")
-    #2.prevent multi statment injection (semicolouns)
-    clean_sql=clean_sql.rstrip(";")
-    if ";" in clean_sql:
-        raise ValueError("Multi Statments are blocked")
-    
-    #3.Block  destrcutive mutation
-    forbidden=["DROP","INSERT","DELETE","ALTER","CREATE","TRUNCATE","GRANT","REVOKE", "UPDATE"]
-    for word in forbidden:
-        if clean_sql.startswith(word):
-            raise ValueError(f"Only SELECT queries are allowed. {word} is blocked.")
-
-    # Auto enforced Limit 50 is missing
-    if "LIMIT" not in clean_sql:
-        clean_sql=f"{clean_sql} LIMIT 50"
-    return clean_sql, params
+    sql = validate_select_sql(sql)
+    return sql, params
 
 
+ALLOWED_TABLES = {"contracts", "invoices"}
+# Functions that are read-only SELECTs on paper but touch the server, files or time.
+BLOCKED_FUNCTIONS = {
+    "pg_sleep", "pg_read_file", "pg_read_binary_file", "pg_ls_dir", "pg_stat_file",
+    "lo_import", "lo_export", "lo_get", "dblink", "dblink_exec", "set_config",
+    "pg_terminate_backend", "pg_cancel_backend", "copy",
+}
+_WRITE_NODES = (
+    exp.Insert, exp.Update, exp.Delete, exp.Drop, exp.Create, exp.Alter,
+    exp.Command, exp.Grant, exp.TruncateTable, exp.Merge, exp.Into,
+)
+
+
+def validate_select_sql(sql: str) -> str:
+    """Allow exactly one read-only SELECT on the contracts/invoices tables.
+
+    Parses the SQL (not string matching), keeps the original case so named
+    parameters and string literals are untouched, and appends LIMIT 50 when
+    the top-level query has no LIMIT.
+    """
+    try:
+        statements = [s for s in sqlglot.parse(sql, read="postgres") if s is not None]
+    except sqlglot.errors.ParseError as exc:
+        raise ValueError(f"Could not parse generated SQL: {exc}") from exc
+
+    if len(statements) != 1:
+        raise ValueError("Exactly one SQL statement is allowed")
+    tree = statements[0]
+    if not isinstance(tree, exp.Select):
+        raise ValueError("Only SELECT queries are allowed")
+
+    if any(tree.find(node) for node in _WRITE_NODES):
+        raise ValueError("Data-modifying statements are blocked")
+
+    cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
+    for table in tree.find_all(exp.Table):
+        name = table.name.lower()
+        if name not in ALLOWED_TABLES and name not in cte_names:
+            raise ValueError(f"Table '{table.name}' is not allowed")
+
+    for func in tree.find_all(exp.Func):
+        fname = (func.name or func.key or "").lower()
+        if fname in BLOCKED_FUNCTIONS:
+            raise ValueError(f"Function '{fname}' is not allowed")
+
+    # Return the ORIGINAL text: regenerating via sqlglot would rewrite :name
+    # placeholders into %(name)s, which SQLAlchemy text() would not bind.
+    cleaned = sql.strip().rstrip(";").rstrip()
+    if not tree.args.get("limit"):
+        cleaned = f"{cleaned} LIMIT 50"
+    return cleaned
 
 
 def execute_db_query(sql: str, params: dict) -> list[dict]:
@@ -119,6 +153,9 @@ def execute_db_query(sql: str, params: dict) -> list[dict]:
     Returns a list of JSON-serializable row dicts.
     """
     with Session(engine) as session:
+        # Defence in depth: even if validation is bypassed, nothing can be written.
+        session.execute(text("SET TRANSACTION READ ONLY"))
+        session.execute(text("SET LOCAL statement_timeout = 10000"))
         result = session.execute(text(sql), params)
         columns = list(result.keys())
         rows = result.fetchall()

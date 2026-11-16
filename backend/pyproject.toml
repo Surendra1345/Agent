@@ -3,7 +3,7 @@ name = "agent"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.141.1",
     "fastembed>=0.8.0",
@@ -12,7 +12,6 @@ dependencies = [
     "langchain-google-genai>=4.4.0",
     "langchain-openai>=1.6.2",
     "langgraph>=1.2.11",
-    "logging>=0.4.9.6",
     "onnxruntime>=1.20.0",
     "openai>=3.14.1",
     "pgvector>=0.5.0",
@@ -22,5 +21,9 @@ dependencies = [
     "python-multipart>=0.0.32",
     "rapidocr>=3.9.2",
     "sqlalchemy>=2.0.53",
+    "sqlglot>=25.0.0",
     "uvicorn>=0.53.0",
 ]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "httpx>=0.27"]
